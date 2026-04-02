@@ -28,9 +28,7 @@ function validateSecret() {
   }
 }
 
-if (process.env.NODE_ENV === "production") {
-  validateSecret()
-}
+// Validated lazily at first auth request, not at import time (breaks builds without .env)
 
 async function refreshAccessToken(token: JWT): Promise<JWT> {
   const response = await fetch("https://oauth2.googleapis.com/token", {
@@ -76,6 +74,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async jwt({ token, account }) {
+      // Validate secret on first real auth request
+      if (account && process.env.NODE_ENV === "production") {
+        validateSecret()
+      }
       if (account) {
         token.accessToken = account.access_token
         token.refreshToken = account.refresh_token
@@ -97,7 +99,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     session({ session, token }) {
       // Access token intentionally NOT exposed to client
       if (token.error) {
-        (session as Record<string, unknown>).error = token.error
+        (session as unknown as Record<string, unknown>).error = token.error
       }
       return session
     },

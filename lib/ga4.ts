@@ -12,11 +12,12 @@ function createClient(accessToken: string) {
   return new BetaAnalyticsDataClient({ authClient: oauth2Client as never })
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function runReportWithRetry(
   client: InstanceType<typeof BetaAnalyticsDataClient>,
   request: Parameters<typeof client.runReport>[0],
   retries = 3
-): Promise<Awaited<ReturnType<typeof client.runReport>>> {
+): Promise<any> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await client.runReport(request)
@@ -114,7 +115,7 @@ export const getUsersByDay = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       date: formatGA4Date(row.dimensionValues?.[0]?.value ?? ""),
       value: Number(row.metricValues?.[0]?.value ?? 0),
     }))
@@ -140,7 +141,7 @@ export const getTopPages = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       page: row.dimensionValues?.[0]?.value ?? "",
       pageviews: Number(row.metricValues?.[0]?.value ?? 0),
     }))
@@ -166,7 +167,7 @@ export const getTopSources = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       source: row.dimensionValues?.[0]?.value ?? "(direct)",
       users: Number(row.metricValues?.[0]?.value ?? 0),
     }))
@@ -197,7 +198,7 @@ export const getTrafficByChannel = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       channel: row.dimensionValues?.[0]?.value ?? "",
       users: Number(row.metricValues?.[0]?.value ?? 0),
       sessions: Number(row.metricValues?.[1]?.value ?? 0),
@@ -229,7 +230,7 @@ export const getTrafficBySource = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       source: row.dimensionValues?.[0]?.value ?? "(direct)",
       medium: row.dimensionValues?.[1]?.value ?? "(none)",
       users: Number(row.metricValues?.[0]?.value ?? 0),
@@ -266,7 +267,7 @@ export const getTrafficByCampaign = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       campaign: row.dimensionValues?.[0]?.value ?? "(not set)",
       source: row.dimensionValues?.[1]?.value ?? "",
       medium: row.dimensionValues?.[2]?.value ?? "",
@@ -301,7 +302,7 @@ export const getPageMetrics = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => {
+    return (response.rows ?? []).map((row: any) => {
       const pageviews = Number(row.metricValues?.[0]?.value ?? 0)
       const engagementDuration = Number(row.metricValues?.[2]?.value ?? 0)
       return {
@@ -383,7 +384,7 @@ export const getTopEvents = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       event: row.dimensionValues?.[0]?.value ?? "",
       count: Number(row.metricValues?.[0]?.value ?? 0),
       users: Number(row.metricValues?.[1]?.value ?? 0),
@@ -447,7 +448,7 @@ export const getConversionMetrics = cache(
       returnPropertyQuota: true,
     })
 
-    const byEvent = (eventResponse.rows ?? []).map((row) => ({
+    const byEvent = (eventResponse.rows ?? []).map((row: any) => ({
       event: row.dimensionValues?.[0]?.value ?? "",
       conversions: Number(row.metricValues?.[0]?.value ?? 0),
       users: Number(row.metricValues?.[1]?.value ?? 0),
@@ -475,7 +476,7 @@ export const getConversionsBySource = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       source: row.dimensionValues?.[0]?.value ?? "(direct)",
       medium: row.dimensionValues?.[1]?.value ?? "(none)",
       conversions: Number(row.metricValues?.[0]?.value ?? 0),
@@ -562,7 +563,7 @@ export const getRevenueBySource = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       source: row.dimensionValues?.[0]?.value ?? "(direct)",
       medium: row.dimensionValues?.[1]?.value ?? "(none)",
       revenue: Number(row.metricValues?.[0]?.value ?? 0),
@@ -591,7 +592,7 @@ export const getRevenueByPage = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       page: row.dimensionValues?.[0]?.value ?? "",
       revenue: Number(row.metricValues?.[0]?.value ?? 0),
       transactions: Number(row.metricValues?.[1]?.value ?? 0),
@@ -618,7 +619,7 @@ export const getDeviceBreakdown = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       device: row.dimensionValues?.[0]?.value ?? "",
       users: Number(row.metricValues?.[0]?.value ?? 0),
       sessions: Number(row.metricValues?.[1]?.value ?? 0),
@@ -644,7 +645,7 @@ export const getBrowserBreakdown = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       browser: row.dimensionValues?.[0]?.value ?? "",
       users: Number(row.metricValues?.[0]?.value ?? 0),
       sessions: Number(row.metricValues?.[1]?.value ?? 0),
@@ -670,7 +671,7 @@ export const getOSBreakdown = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       os: row.dimensionValues?.[0]?.value ?? "",
       users: Number(row.metricValues?.[0]?.value ?? 0),
       sessions: Number(row.metricValues?.[1]?.value ?? 0),
@@ -700,7 +701,7 @@ export const getFullDeviceTable = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       device: row.dimensionValues?.[0]?.value ?? "",
       browser: row.dimensionValues?.[1]?.value ?? "",
       os: row.dimensionValues?.[2]?.value ?? "",
@@ -735,7 +736,7 @@ export const getGeoMetrics = cache(
       returnPropertyQuota: true,
     })
 
-    return (response.rows ?? []).map((row) => ({
+    return (response.rows ?? []).map((row: any) => ({
       country: row.dimensionValues?.[0]?.value ?? "",
       city: row.dimensionValues?.[1]?.value ?? "",
       users: Number(row.metricValues?.[0]?.value ?? 0),

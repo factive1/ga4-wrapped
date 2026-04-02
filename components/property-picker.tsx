@@ -24,7 +24,6 @@ export function PropertyPicker({
 
   function handleChange(propertyId: string) {
     setValue(propertyId)
-    // Set cookie and refresh
     document.cookie = `ga4_property_id=${propertyId}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
     startTransition(() => {
       router.refresh()
@@ -40,14 +39,18 @@ export function PropertyPicker({
   }
 
   return (
-    <Select value={value} onValueChange={handleChange} disabled={isPending}>
+    <Select
+      value={value}
+      onValueChange={(v) => handleChange(v as string)}
+      disabled={isPending}
+    >
       <SelectTrigger className="w-full">
         <SelectValue placeholder="Select a property" />
       </SelectTrigger>
       <SelectContent>
         {properties.map((property) => (
           <SelectItem key={property.propertyId} value={property.propertyId}>
-            <span className="truncate">{property.displayName}</span>
+            {property.displayName}
           </SelectItem>
         ))}
       </SelectContent>

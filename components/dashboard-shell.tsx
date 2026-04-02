@@ -29,7 +29,7 @@ export async function DashboardShell({
   const propertyId = cookieStore.get("ga4_property_id")?.value ?? null
   const sidebarState = cookieStore.get("sidebar_state")?.value
 
-  let properties = []
+  let properties: Awaited<ReturnType<typeof listProperties>> = []
   try {
     properties = await listProperties(accessToken)
   } catch {

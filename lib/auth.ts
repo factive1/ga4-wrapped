@@ -10,7 +10,7 @@ export async function requireAuth() {
     redirect("/sign-in")
   }
 
-  if ((session as Record<string, unknown>).error === "RefreshTokenError") {
+  if ((session as unknown as Record<string, unknown>).error === "RefreshTokenError") {
     redirect("/sign-in")
   }
 

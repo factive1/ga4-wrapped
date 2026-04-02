@@ -84,12 +84,13 @@ export function DateRangePicker() {
       </div>
 
       <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" disabled={isPending}>
-            <CalendarDays className="mr-2 h-4 w-4" />
-            <span className="sm:hidden">{formatDisplay()}</span>
-            <span className="hidden sm:inline">Custom</span>
-          </Button>
+        <PopoverTrigger
+          className="inline-flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+          disabled={isPending}
+        >
+          <CalendarDays className="h-4 w-4" />
+          <span className="sm:hidden">{formatDisplay()}</span>
+          <span className="hidden sm:inline">Custom</span>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="end">
           <div className="sm:hidden flex flex-wrap gap-1 p-3 border-b">
