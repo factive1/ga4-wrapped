@@ -22,9 +22,11 @@ export function PropertyPicker({
   const [isPending, startTransition] = useTransition()
   const [value, setValue] = useState(currentPropertyId ?? "")
 
-  function handleChange(propertyId: string) {
+  function handleChange(propertyId: string | null) {
+    if (!propertyId) return
     setValue(propertyId)
-    document.cookie = `ga4_property_id=${propertyId}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`
+    const secure = window.location.protocol === "https:" ? "; Secure" : ""
+    document.cookie = `ga4_property_id=${propertyId}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax${secure}`
     startTransition(() => {
       router.refresh()
     })
@@ -41,7 +43,7 @@ export function PropertyPicker({
   return (
     <Select
       value={value}
-      onValueChange={(v) => handleChange(v as string)}
+      onValueChange={handleChange}
       disabled={isPending}
     >
       <SelectTrigger className="w-full">

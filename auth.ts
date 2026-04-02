@@ -28,9 +28,18 @@ function validateSecret() {
   }
 }
 
-// Validated lazily at first auth request, not at import time (breaks builds without .env)
+function validateGoogleCredentials() {
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    throw new Error("GOOGLE_CLIENT_ID is not set")
+  }
+  if (!process.env.GOOGLE_CLIENT_SECRET) {
+    throw new Error("GOOGLE_CLIENT_SECRET is not set")
+  }
+}
 
 async function refreshAccessToken(token: JWT): Promise<JWT> {
+  validateGoogleCredentials()
+
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -42,11 +51,14 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
     }),
   })
 
-  const data = await response.json()
-
   if (!response.ok) {
-    throw new Error("Failed to refresh access token")
+    const error = await response.json().catch(() => ({}))
+    throw new Error(
+      `Failed to refresh access token: ${error.error_description ?? response.status}`
+    )
   }
+
+  const data = await response.json()
 
   return {
     ...token,
@@ -74,8 +86,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async jwt({ token, account }) {
-      // Validate secret on first real auth request
-      if (account && process.env.NODE_ENV === "production") {
+      if (process.env.NODE_ENV === "production") {
         validateSecret()
       }
       if (account) {
@@ -85,7 +96,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       // Return token if still valid (with 60s buffer)
-      if (Date.now() < ((token.expiresAt as number) - 60) * 1000) {
+      if (Date.now() < ((token.expiresAt ?? 0) - 60) * 1000) {
         return token
       }
 
@@ -99,7 +110,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     session({ session, token }) {
       // Access token intentionally NOT exposed to client
       if (token.error) {
-        (session as unknown as Record<string, unknown>).error = token.error
+        session.error = token.error
       }
       return session
     },

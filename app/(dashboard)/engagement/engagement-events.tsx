@@ -9,9 +9,9 @@ import type { TableRow } from "@/lib/types"
 const DEFAULT_EXCLUDED = ["page_view", "session_start", "first_visit", "scroll"]
 
 const columns = [
-  { key: "event", label: "Event Name", format: "text" as const },
-  { key: "count", label: "Event Count", format: "number" as const },
-  { key: "users", label: "Users", format: "number" as const },
+  { key: "eventName", label: "Event Name", format: "text" as const },
+  { key: "eventCount", label: "Event Count", format: "number" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
 ]
 
 export function EngagementEvents({ events }: { events: TableRow[] }) {
@@ -20,7 +20,7 @@ export function EngagementEvents({ events }: { events: TableRow[] }) {
   const filtered = useMemo(() => {
     if (showDefault) return events
     return events.filter(
-      (e) => !DEFAULT_EXCLUDED.includes(e.event as string)
+      (e) => !DEFAULT_EXCLUDED.includes(e.eventName as string)
     )
   }, [events, showDefault])
 
@@ -29,8 +29,8 @@ export function EngagementEvents({ events }: { events: TableRow[] }) {
       <TopBarChart
         title="Top Events by Count"
         data={filtered as Record<string, string | number>[]}
-        dataKey="count"
-        labelKey="event"
+        dataKey="eventCount"
+        labelKey="eventName"
         valueLabel="Events"
       />
 

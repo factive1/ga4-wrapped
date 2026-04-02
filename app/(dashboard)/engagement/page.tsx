@@ -1,13 +1,9 @@
 import { Suspense } from "react"
-import { cookies } from "next/headers"
-import { getAccessToken } from "@/lib/auth"
-import { parseDateParams } from "@/lib/date-utils"
+import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getEngagementMetrics, getTopEvents } from "@/lib/ga4"
 import { MetricCard } from "@/components/metric-card"
-import { TopBarChart } from "@/components/charts/bar-chart"
-import { SkeletonCards } from "@/components/skeleton-card"
-import { SkeletonChart } from "@/components/skeleton-chart"
-import { SkeletonTable } from "@/components/skeleton-table"
+import { NoProperty } from "@/components/no-property"
+import { SkeletonCards, SkeletonChart, SkeletonTable } from "@/components/skeletons"
 import { ErrorDisplay } from "@/components/error-display"
 import { EngagementEvents } from "./engagement-events"
 
@@ -15,20 +11,9 @@ export default async function EngagementPage(props: {
   searchParams: Promise<Record<string, string>>
 }) {
   const searchParams = await props.searchParams
-  const cookieStore = await cookies()
-  const propertyId = cookieStore.get("ga4_property_id")?.value
+  const { propertyId, dateRange } = await getPageContext(searchParams)
 
-  if (!propertyId) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">
-          Select a GA4 property from the sidebar to get started.
-        </p>
-      </div>
-    )
-  }
-
-  const dateRange = parseDateParams(searchParams)
+  if (!propertyId) return <NoProperty />
 
   return (
     <div className="space-y-6">

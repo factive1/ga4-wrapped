@@ -1,46 +1,33 @@
 import { Suspense } from "react"
-import { cookies } from "next/headers"
-import { getAccessToken } from "@/lib/auth"
-import { parseDateParams } from "@/lib/date-utils"
+import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getConversionMetrics, getConversionsBySource } from "@/lib/ga4"
 import { MetricCard } from "@/components/metric-card"
 import { SortableTable } from "@/components/sortable-table"
-import { SkeletonCards } from "@/components/skeleton-card"
-import { SkeletonTable } from "@/components/skeleton-table"
+import { NoProperty } from "@/components/no-property"
+import { SkeletonCards, SkeletonTable } from "@/components/skeletons"
 import { ErrorDisplay } from "@/components/error-display"
 
 const eventColumns = [
-  { key: "event", label: "Conversion Event", format: "text" as const },
+  { key: "eventName", label: "Conversion Event", format: "text" as const },
   { key: "conversions", label: "Completions", format: "number" as const },
-  { key: "users", label: "Users", format: "number" as const },
-  { key: "rate", label: "Conversion Rate", format: "percent" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
+  { key: "sessionConversionRate", label: "Conversion Rate", format: "percent" as const },
 ]
 
 const sourceColumns = [
-  { key: "source", label: "Source", format: "text" as const },
-  { key: "medium", label: "Medium", format: "text" as const },
+  { key: "sessionSource", label: "Source", format: "text" as const },
+  { key: "sessionMedium", label: "Medium", format: "text" as const },
   { key: "conversions", label: "Conversions", format: "number" as const },
-  { key: "rate", label: "Conversion Rate", format: "percent" as const },
+  { key: "sessionConversionRate", label: "Conversion Rate", format: "percent" as const },
 ]
 
 export default async function ConversionsPage(props: {
   searchParams: Promise<Record<string, string>>
 }) {
   const searchParams = await props.searchParams
-  const cookieStore = await cookies()
-  const propertyId = cookieStore.get("ga4_property_id")?.value
+  const { propertyId, dateRange } = await getPageContext(searchParams)
 
-  if (!propertyId) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">
-          Select a GA4 property from the sidebar to get started.
-        </p>
-      </div>
-    )
-  }
-
-  const dateRange = parseDateParams(searchParams)
+  if (!propertyId) return <NoProperty />
 
   return (
     <div className="space-y-6">

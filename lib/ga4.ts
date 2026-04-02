@@ -3,24 +3,34 @@ import { OAuth2Client } from "google-auth-library"
 import type { DateRangeParams, MetricCardData, TimeSeriesPoint, TableRow } from "./types"
 import { getComparisonRange, formatNumber, formatDuration, formatPercent } from "./date-utils"
 
+// Google client libraries use CommonJS; require() avoids ESM interop issues
 const { BetaAnalyticsDataClient } =
   require("@google-analytics/data") as typeof import("@google-analytics/data")
 
-function createClient(accessToken: string) {
+// ─── Singleton client per request (React.cache deduplicates within a render) ─
+
+const getDataClient = cache((accessToken: string) => {
   const oauth2Client = new OAuth2Client()
   oauth2Client.setCredentials({ access_token: accessToken })
+  // The Google client library accepts OAuth2Client but the types don't fully align
   return new BetaAnalyticsDataClient({ authClient: oauth2Client as never })
+})
+
+// ─── Generic report helpers ──────────────────────────────────────────────────
+
+interface ReportConfig {
+  dimensions: string[]
+  metrics: string[]
+  orderBy?: { metric?: string; dimension?: string; desc?: boolean }
+  limit?: number
+  dimensionFilter?: unknown
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function runReportWithRetry(
-  client: InstanceType<typeof BetaAnalyticsDataClient>,
-  request: Parameters<typeof client.runReport>[0],
-  retries = 3
-): Promise<any> {
+async function runWithRetry(client: any, method: string, request: unknown, retries = 3): Promise<any> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      return await client.runReport(request)
+      return await client[method](request)
     } catch (error: unknown) {
       const err = error as { code?: number }
       if (err.code === 429 && attempt < retries - 1) {
@@ -33,16 +43,62 @@ async function runReportWithRetry(
   throw new Error("Max retries exceeded")
 }
 
+function mapRows(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rows: any[],
+  dimKeys: string[],
+  metricKeys: string[],
+  defaults?: Record<string, string>
+): TableRow[] {
+  return rows.map((row) => {
+    const obj: TableRow = {}
+    dimKeys.forEach((key, i) => {
+      obj[key] = row.dimensionValues?.[i]?.value ?? defaults?.[key] ?? ""
+    })
+    metricKeys.forEach((key, i) => {
+      obj[key] = Number(row.metricValues?.[i]?.value ?? 0)
+    })
+    return obj
+  })
+}
+
+const runReport = cache(
+  async (
+    accessToken: string,
+    propertyId: string,
+    dateRange: DateRangeParams,
+    config: ReportConfig
+  ): Promise<TableRow[]> => {
+    const client = getDataClient(accessToken)
+    const [response] = await runWithRetry(client, "runReport", {
+      property: `properties/${propertyId}`,
+      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
+      dimensions: config.dimensions.map((name) => ({ name })),
+      metrics: config.metrics.map((name) => ({ name })),
+      orderBys: config.orderBy
+        ? [
+            config.orderBy.metric
+              ? { metric: { metricName: config.orderBy.metric }, desc: config.orderBy.desc ?? true }
+              : { dimension: { dimensionName: config.orderBy.dimension } },
+          ]
+        : undefined,
+      limit: config.limit ?? 500,
+      dimensionFilter: config.dimensionFilter,
+      returnPropertyQuota: true,
+    })
+    return mapRows(response.rows ?? [], config.dimensions, config.metrics)
+  }
+)
+
 // ─── Overview ────────────────────────────────────────────────────────────────
 
 export const getRealtimeActiveUsers = cache(
   async (accessToken: string, propertyId: string): Promise<number> => {
-    const client = createClient(accessToken)
+    const client = getDataClient(accessToken)
     const [response] = await client.runRealtimeReport({
       property: `properties/${propertyId}`,
       metrics: [{ name: "activeUsers" }],
     })
-
     return Number(response.rows?.[0]?.metricValues?.[0]?.value ?? 0)
   }
 )
@@ -53,10 +109,10 @@ export const getOverviewMetrics = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<MetricCardData[]> => {
-    const client = createClient(accessToken)
+    const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
-    const [response] = await runReportWithRetry(client, {
+    const [response] = await runWithRetry(client, "runReport", {
       property: `properties/${propertyId}`,
       dateRanges: [
         { startDate: dateRange.from, endDate: dateRange.to },
@@ -75,24 +131,21 @@ export const getOverviewMetrics = cache(
     const current = response.rows?.[0]?.metricValues ?? []
     const previous = response.rows?.[1]?.metricValues ?? []
 
-    const metrics = [
-      { label: "Users", idx: 0, fmt: formatNumber, isNum: true },
-      { label: "Sessions", idx: 1, fmt: formatNumber, isNum: true },
-      { label: "Pageviews", idx: 2, fmt: formatNumber, isNum: true },
-      { label: "Bounce Rate", idx: 3, fmt: formatPercent, isNum: false },
-      { label: "Avg. Session Duration", idx: 4, fmt: formatDuration, isNum: false },
+    const defs = [
+      { label: "Users", idx: 0, fmt: formatNumber },
+      { label: "Sessions", idx: 1, fmt: formatNumber },
+      { label: "Pageviews", idx: 2, fmt: formatNumber },
+      { label: "Bounce Rate", idx: 3, fmt: formatPercent },
+      { label: "Avg. Session Duration", idx: 4, fmt: formatDuration },
     ]
 
-    return metrics.map(({ label, idx, fmt, isNum }) => {
+    return defs.map(({ label, idx, fmt }) => {
       const curVal = Number(current[idx]?.value ?? 0)
       const prevVal = Number(previous[idx]?.value ?? 0)
-      const change =
-        prevVal === 0 ? null : ((curVal - prevVal) / prevVal) * 100
-
       return {
         label,
-        value: isNum ? fmt(curVal) : fmt(curVal),
-        change: change !== null ? Math.round(change * 10) / 10 : null,
+        value: fmt(curVal),
+        change: calcChange(curVal, prevVal),
       }
     })
   }
@@ -104,215 +157,85 @@ export const getUsersByDay = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<TimeSeriesPoint[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "date" }],
-      metrics: [{ name: "totalUsers" }],
-      orderBys: [{ dimension: { dimensionName: "date" } }],
-      returnPropertyQuota: true,
+    const rows = await runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["date"],
+      metrics: ["totalUsers"],
+      orderBy: { dimension: "date", desc: false },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      date: formatGA4Date(row.dimensionValues?.[0]?.value ?? ""),
-      value: Number(row.metricValues?.[0]?.value ?? 0),
+    return rows.map((r) => ({
+      date: formatGA4Date(r.date as string),
+      value: r.totalUsers as number,
     }))
   }
 )
 
 export const getTopPages = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams,
-    limit = 5
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "pagePath" }],
-      metrics: [{ name: "screenPageViews" }],
-      orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+  async (accessToken: string, propertyId: string, dateRange: DateRangeParams, limit = 5) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["pagePath"],
+      metrics: ["screenPageViews"],
+      orderBy: { metric: "screenPageViews" },
       limit,
-      returnPropertyQuota: true,
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      page: row.dimensionValues?.[0]?.value ?? "",
-      pageviews: Number(row.metricValues?.[0]?.value ?? 0),
-    }))
-  }
 )
 
 export const getTopSources = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams,
-    limit = 5
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "sessionSource" }],
-      metrics: [{ name: "totalUsers" }],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
+  async (accessToken: string, propertyId: string, dateRange: DateRangeParams, limit = 5) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionSource"],
+      metrics: ["totalUsers"],
+      orderBy: { metric: "totalUsers" },
       limit,
-      returnPropertyQuota: true,
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      source: row.dimensionValues?.[0]?.value ?? "(direct)",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Traffic ─────────────────────────────────────────────────────────────────
 
+const TRAFFIC_METRICS = ["totalUsers", "sessions", "bounceRate", "averageSessionDuration"]
+
 export const getTrafficByChannel = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "sessionDefaultChannelGroup" }],
-      metrics: [
-        { name: "totalUsers" },
-        { name: "sessions" },
-        { name: "bounceRate" },
-        { name: "averageSessionDuration" },
-      ],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionDefaultChannelGroup"],
+      metrics: TRAFFIC_METRICS,
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      channel: row.dimensionValues?.[0]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-      bounceRate: Number(row.metricValues?.[2]?.value ?? 0),
-      avgDuration: Number(row.metricValues?.[3]?.value ?? 0),
-    }))
-  }
 )
 
 export const getTrafficBySource = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
-      metrics: [
-        { name: "totalUsers" },
-        { name: "sessions" },
-        { name: "bounceRate" },
-        { name: "averageSessionDuration" },
-      ],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionSource", "sessionMedium"],
+      metrics: TRAFFIC_METRICS,
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      source: row.dimensionValues?.[0]?.value ?? "(direct)",
-      medium: row.dimensionValues?.[1]?.value ?? "(none)",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-      bounceRate: Number(row.metricValues?.[2]?.value ?? 0),
-      avgDuration: Number(row.metricValues?.[3]?.value ?? 0),
-    }))
-  }
 )
 
 export const getTrafficByCampaign = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [
-        { name: "sessionCampaignName" },
-        { name: "sessionSource" },
-        { name: "sessionMedium" },
-      ],
-      metrics: [
-        { name: "totalUsers" },
-        { name: "sessions" },
-        { name: "bounceRate" },
-        { name: "averageSessionDuration" },
-      ],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionCampaignName", "sessionSource", "sessionMedium"],
+      metrics: ["totalUsers", "sessions", "bounceRate", "averageSessionDuration"],
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      campaign: row.dimensionValues?.[0]?.value ?? "(not set)",
-      source: row.dimensionValues?.[1]?.value ?? "",
-      medium: row.dimensionValues?.[2]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-      bounceRate: Number(row.metricValues?.[2]?.value ?? 0),
-      avgDuration: Number(row.metricValues?.[3]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Pages ───────────────────────────────────────────────────────────────────
 
 export const getPageMetrics = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
-      metrics: [
-        { name: "screenPageViews" },
-        { name: "totalUsers" },
-        { name: "userEngagementDuration" },
-      ],
-      orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
-      returnPropertyQuota: true,
+  async (accessToken: string, propertyId: string, dateRange: DateRangeParams): Promise<TableRow[]> => {
+    const rows = await runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["pagePath", "pageTitle"],
+      metrics: ["screenPageViews", "totalUsers", "userEngagementDuration"],
+      orderBy: { metric: "screenPageViews" },
     })
-
-    return (response.rows ?? []).map((row: any) => {
-      const pageviews = Number(row.metricValues?.[0]?.value ?? 0)
-      const engagementDuration = Number(row.metricValues?.[2]?.value ?? 0)
-      return {
-        path: row.dimensionValues?.[0]?.value ?? "",
-        title: row.dimensionValues?.[1]?.value ?? "",
-        pageviews,
-        users: Number(row.metricValues?.[1]?.value ?? 0),
-        avgTimeOnPage: pageviews > 0 ? engagementDuration / pageviews : 0,
-      }
-    })
+    return rows.map((r) => ({
+      ...r,
+      avgTimeOnPage:
+        (r.screenPageViews as number) > 0
+          ? (r.userEngagementDuration as number) / (r.screenPageViews as number)
+          : 0,
+    }))
   }
 )
 
@@ -324,10 +247,10 @@ export const getEngagementMetrics = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<MetricCardData[]> => {
-    const client = createClient(accessToken)
+    const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
-    const [response] = await runReportWithRetry(client, {
+    const [response] = await runWithRetry(client, "runReport", {
       property: `properties/${propertyId}`,
       dateRanges: [
         { startDate: dateRange.from, endDate: dateRange.to },
@@ -345,51 +268,28 @@ export const getEngagementMetrics = cache(
     const current = response.rows?.[0]?.metricValues ?? []
     const previous = response.rows?.[1]?.metricValues ?? []
 
-    const metrics = [
+    const defs = [
       { label: "Engagement Rate", idx: 0, fmt: (v: number) => formatPercent(v * 100) },
       { label: "Avg. Engaged Time", idx: 1, fmt: formatDuration },
       { label: "Pages / Session", idx: 2, fmt: (v: number) => v.toFixed(1) },
       { label: "Events / Session", idx: 3, fmt: (v: number) => v.toFixed(1) },
     ]
 
-    return metrics.map(({ label, idx, fmt }) => {
+    return defs.map(({ label, idx, fmt }) => {
       const curVal = Number(current[idx]?.value ?? 0)
       const prevVal = Number(previous[idx]?.value ?? 0)
-      const change =
-        prevVal === 0 ? null : ((curVal - prevVal) / prevVal) * 100
-
-      return {
-        label,
-        value: fmt(curVal),
-        change: change !== null ? Math.round(change * 10) / 10 : null,
-      }
+      return { label, value: fmt(curVal), change: calcChange(curVal, prevVal) }
     })
   }
 )
 
 export const getTopEvents = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "eventName" }],
-      metrics: [{ name: "eventCount" }, { name: "totalUsers" }],
-      orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["eventName"],
+      metrics: ["eventCount", "totalUsers"],
+      orderBy: { metric: "eventCount" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      event: row.dimensionValues?.[0]?.value ?? "",
-      count: Number(row.metricValues?.[0]?.value ?? 0),
-      users: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Conversions ─────────────────────────────────────────────────────────────
@@ -400,19 +300,40 @@ export const getConversionMetrics = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<{ cards: MetricCardData[]; byEvent: TableRow[] }> => {
-    const client = createClient(accessToken)
+    const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
-    const [summaryResponse] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [
-        { startDate: dateRange.from, endDate: dateRange.to },
-        { startDate: comparison.from, endDate: comparison.to },
-      ],
-      metrics: [{ name: "conversions" }, { name: "sessionConversionRate" }],
-      returnPropertyQuota: true,
-    })
+    // Fire both requests in parallel (they are independent)
+    const [summaryResult, eventResult] = await Promise.all([
+      runWithRetry(client, "runReport", {
+        property: `properties/${propertyId}`,
+        dateRanges: [
+          { startDate: dateRange.from, endDate: dateRange.to },
+          { startDate: comparison.from, endDate: comparison.to },
+        ],
+        metrics: [{ name: "conversions" }, { name: "sessionConversionRate" }],
+        returnPropertyQuota: true,
+      }),
+      runWithRetry(client, "runReport", {
+        property: `properties/${propertyId}`,
+        dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
+        dimensions: [{ name: "eventName" }],
+        metrics: [
+          { name: "conversions" },
+          { name: "totalUsers" },
+          { name: "sessionConversionRate" },
+        ],
+        dimensionFilter: {
+          filter: { fieldName: "isConversionEvent", stringFilter: { value: "true" } },
+        },
+        orderBys: [{ metric: { metricName: "conversions" }, desc: true }],
+        limit: 500,
+        returnPropertyQuota: true,
+      }),
+    ])
 
+    const [summaryResponse] = summaryResult
+    const [eventResponse] = eventResult
     const current = summaryResponse.rows?.[0]?.metricValues ?? []
     const previous = summaryResponse.rows?.[1]?.metricValues ?? []
 
@@ -429,60 +350,23 @@ export const getConversionMetrics = cache(
       },
     ]
 
-    const [eventResponse] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "eventName" }],
-      metrics: [
-        { name: "conversions" },
-        { name: "totalUsers" },
-        { name: "sessionConversionRate" },
-      ],
-      dimensionFilter: {
-        filter: {
-          fieldName: "isConversionEvent",
-          stringFilter: { value: "true" },
-        },
-      },
-      orderBys: [{ metric: { metricName: "conversions" }, desc: true }],
-      returnPropertyQuota: true,
-    })
-
-    const byEvent = (eventResponse.rows ?? []).map((row: any) => ({
-      event: row.dimensionValues?.[0]?.value ?? "",
-      conversions: Number(row.metricValues?.[0]?.value ?? 0),
-      users: Number(row.metricValues?.[1]?.value ?? 0),
-      rate: Number(row.metricValues?.[2]?.value ?? 0),
-    }))
+    const byEvent = mapRows(
+      eventResponse.rows ?? [],
+      ["eventName"],
+      ["conversions", "totalUsers", "sessionConversionRate"]
+    )
 
     return { cards, byEvent }
   }
 )
 
 export const getConversionsBySource = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
-      metrics: [{ name: "conversions" }, { name: "sessionConversionRate" }],
-      orderBys: [{ metric: { metricName: "conversions" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionSource", "sessionMedium"],
+      metrics: ["conversions", "sessionConversionRate"],
+      orderBy: { metric: "conversions" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      source: row.dimensionValues?.[0]?.value ?? "(direct)",
-      medium: row.dimensionValues?.[1]?.value ?? "(none)",
-      conversions: Number(row.metricValues?.[0]?.value ?? 0),
-      rate: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Revenue ─────────────────────────────────────────────────────────────────
@@ -493,10 +377,10 @@ export const getRevenueMetrics = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<MetricCardData[]> => {
-    const client = createClient(accessToken)
+    const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
-    const [response] = await runReportWithRetry(client, {
+    const [response] = await runWithRetry(client, "runReport", {
       property: `properties/${propertyId}`,
       dateRanges: [
         { startDate: dateRange.from, endDate: dateRange.to },
@@ -505,7 +389,6 @@ export const getRevenueMetrics = cache(
       metrics: [
         { name: "totalRevenue" },
         { name: "transactions" },
-        { name: "totalRevenue" },
         { name: "purchaseRevenue" },
       ],
       returnPropertyQuota: true,
@@ -516,7 +399,7 @@ export const getRevenueMetrics = cache(
 
     const revenue = Number(current[0]?.value ?? 0)
     const transactions = Number(current[1]?.value ?? 0)
-    const users = transactions > 0 ? revenue / transactions : 0
+    const avgOrderValue = transactions > 0 ? revenue / transactions : 0
 
     return [
       {
@@ -530,13 +413,8 @@ export const getRevenueMetrics = cache(
         change: calcChange(transactions, Number(previous[1]?.value ?? 0)),
       },
       {
-        label: "Revenue per Transaction",
-        value: `$${users.toFixed(2)}`,
-        change: null,
-      },
-      {
         label: "Avg. Order Value",
-        value: transactions > 0 ? `$${(revenue / transactions).toFixed(2)}` : "$0",
+        value: `$${avgOrderValue.toFixed(2)}`,
         change: null,
       },
     ]
@@ -544,213 +422,77 @@ export const getRevenueMetrics = cache(
 )
 
 export const getRevenueBySource = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
-      metrics: [
-        { name: "totalRevenue" },
-        { name: "transactions" },
-      ],
-      orderBys: [{ metric: { metricName: "totalRevenue" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["sessionSource", "sessionMedium"],
+      metrics: ["totalRevenue", "transactions"],
+      orderBy: { metric: "totalRevenue" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      source: row.dimensionValues?.[0]?.value ?? "(direct)",
-      medium: row.dimensionValues?.[1]?.value ?? "(none)",
-      revenue: Number(row.metricValues?.[0]?.value ?? 0),
-      transactions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 export const getRevenueByPage = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "landingPage" }],
-      metrics: [
-        { name: "totalRevenue" },
-        { name: "transactions" },
-      ],
-      orderBys: [{ metric: { metricName: "totalRevenue" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["landingPage"],
+      metrics: ["totalRevenue", "transactions"],
+      orderBy: { metric: "totalRevenue" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      page: row.dimensionValues?.[0]?.value ?? "",
-      revenue: Number(row.metricValues?.[0]?.value ?? 0),
-      transactions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
 export const getDeviceBreakdown = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "deviceCategory" }],
-      metrics: [{ name: "totalUsers" }, { name: "sessions" }],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["deviceCategory"],
+      metrics: ["totalUsers", "sessions"],
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      device: row.dimensionValues?.[0]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 export const getBrowserBreakdown = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "browser" }],
-      metrics: [{ name: "totalUsers" }, { name: "sessions" }],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["browser"],
+      metrics: ["totalUsers", "sessions"],
+      orderBy: { metric: "totalUsers" },
       limit: 10,
-      returnPropertyQuota: true,
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      browser: row.dimensionValues?.[0]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 export const getOSBreakdown = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "operatingSystem" }],
-      metrics: [{ name: "totalUsers" }, { name: "sessions" }],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["operatingSystem"],
+      metrics: ["totalUsers", "sessions"],
+      orderBy: { metric: "totalUsers" },
       limit: 10,
-      returnPropertyQuota: true,
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      os: row.dimensionValues?.[0]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 export const getFullDeviceTable = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [
-        { name: "deviceCategory" },
-        { name: "browser" },
-        { name: "operatingSystem" },
-        { name: "screenResolution" },
-      ],
-      metrics: [{ name: "totalUsers" }, { name: "sessions" }],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["deviceCategory", "browser", "operatingSystem", "screenResolution"],
+      metrics: ["totalUsers", "sessions"],
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      device: row.dimensionValues?.[0]?.value ?? "",
-      browser: row.dimensionValues?.[1]?.value ?? "",
-      os: row.dimensionValues?.[2]?.value ?? "",
-      resolution: row.dimensionValues?.[3]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Geo ─────────────────────────────────────────────────────────────────────
 
 export const getGeoMetrics = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<TableRow[]> => {
-    const client = createClient(accessToken)
-
-    const [response] = await runReportWithRetry(client, {
-      property: `properties/${propertyId}`,
-      dateRanges: [{ startDate: dateRange.from, endDate: dateRange.to }],
-      dimensions: [{ name: "country" }, { name: "city" }],
-      metrics: [
-        { name: "totalUsers" },
-        { name: "sessions" },
-        { name: "bounceRate" },
-        { name: "averageSessionDuration" },
-      ],
-      orderBys: [{ metric: { metricName: "totalUsers" }, desc: true }],
-      returnPropertyQuota: true,
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
+    runReport(accessToken, propertyId, dateRange, {
+      dimensions: ["country", "city"],
+      metrics: ["totalUsers", "sessions", "bounceRate", "averageSessionDuration"],
+      orderBy: { metric: "totalUsers" },
     })
-
-    return (response.rows ?? []).map((row: any) => ({
-      country: row.dimensionValues?.[0]?.value ?? "",
-      city: row.dimensionValues?.[1]?.value ?? "",
-      users: Number(row.metricValues?.[0]?.value ?? 0),
-      sessions: Number(row.metricValues?.[1]?.value ?? 0),
-      bounceRate: Number(row.metricValues?.[2]?.value ?? 0),
-      avgDuration: Number(row.metricValues?.[3]?.value ?? 0),
-    }))
-  }
 )
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatGA4Date(dateStr: string): string {
-  // GA4 returns dates as YYYYMMDD
   if (dateStr.length === 8) {
     return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
   }

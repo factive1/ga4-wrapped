@@ -1,17 +1,16 @@
 import { Suspense } from "react"
-import { cookies } from "next/headers"
-import { getAccessToken } from "@/lib/auth"
-import { parseDateParams } from "@/lib/date-utils"
+import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getPageMetrics } from "@/lib/ga4"
 import { SortableTable } from "@/components/sortable-table"
-import { SkeletonTable } from "@/components/skeleton-table"
+import { NoProperty } from "@/components/no-property"
+import { SkeletonTable } from "@/components/skeletons"
 import { ErrorDisplay } from "@/components/error-display"
 
 const columns = [
-  { key: "path", label: "Page Path", format: "text" as const },
-  { key: "title", label: "Title", format: "text" as const },
-  { key: "pageviews", label: "Pageviews", format: "number" as const },
-  { key: "users", label: "Users", format: "number" as const },
+  { key: "pagePath", label: "Page Path", format: "text" as const },
+  { key: "pageTitle", label: "Title", format: "text" as const },
+  { key: "screenPageViews", label: "Pageviews", format: "number" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
   { key: "avgTimeOnPage", label: "Avg. Time on Page", format: "duration" as const },
 ]
 
@@ -19,20 +18,9 @@ export default async function PagesPage(props: {
   searchParams: Promise<Record<string, string>>
 }) {
   const searchParams = await props.searchParams
-  const cookieStore = await cookies()
-  const propertyId = cookieStore.get("ga4_property_id")?.value
+  const { propertyId, dateRange } = await getPageContext(searchParams)
 
-  if (!propertyId) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">
-          Select a GA4 property from the sidebar to get started.
-        </p>
-      </div>
-    )
-  }
-
-  const dateRange = parseDateParams(searchParams)
+  if (!propertyId) return <NoProperty />
 
   return (
     <div className="space-y-6">
@@ -60,7 +48,7 @@ async function PagesData({
         title="All Pages"
         data={data}
         columns={columns}
-        searchKey="path"
+        searchKey="pagePath"
         searchPlaceholder="Search by path or title..."
       />
     )

@@ -2,6 +2,7 @@ import { cookies } from "next/headers"
 import { auth, signOut } from "@/auth"
 import { getAccessToken } from "@/lib/auth"
 import { listProperties } from "@/lib/admin"
+import type { GA4Property } from "@/lib/types"
 import {
   Sidebar,
   SidebarHeader,
@@ -14,7 +15,7 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarNav } from "@/components/sidebar-nav"
 import { PropertyPicker } from "@/components/property-picker"
 import { DateRangePicker } from "@/components/date-range-picker"
-import { ThemeToggle } from "@/components/theme-toggle"
+import { ThemeToggle } from "@/components/theme-toggle-button"
 import { Button } from "@/components/ui/button"
 import { LogOut } from "lucide-react"
 
@@ -29,20 +30,17 @@ export async function DashboardShell({
   const propertyId = cookieStore.get("ga4_property_id")?.value ?? null
   const sidebarState = cookieStore.get("sidebar_state")?.value
 
-  let properties: Awaited<ReturnType<typeof listProperties>> = []
+  let properties: GA4Property[] = []
   try {
     properties = await listProperties(accessToken)
   } catch {
     // Properties will be empty — picker shows "No properties found"
   }
 
-  // Validate the stored property ID against user's accessible properties
   const validPropertyId =
     propertyId && properties.some((p) => p.propertyId === propertyId)
       ? propertyId
       : properties[0]?.propertyId ?? null
-
-  // If stored property doesn't match valid one, the picker will handle updating
 
   return (
     <SidebarProvider defaultOpen={sidebarState !== "false"}>
@@ -55,12 +53,7 @@ export async function DashboardShell({
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
             >
-              <rect
-                width="32"
-                height="32"
-                rx="8"
-                className="fill-primary"
-              />
+              <rect width="32" height="32" rx="8" className="fill-primary" />
               <path
                 d="M8 22L12 10L16 18L20 12L24 22"
                 stroke="white"

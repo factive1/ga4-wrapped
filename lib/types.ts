@@ -7,7 +7,6 @@ export interface MetricCardData {
   label: string
   value: string
   change: number | null // percentage change, null if no comparison data
-  changeLabel?: string
 }
 
 export interface TimeSeriesPoint {
@@ -25,12 +24,6 @@ export interface GA4Property {
   accountName: string
 }
 
-export interface QuotaStatus {
-  tokensPerDay: { consumed: number; remaining: number }
-  tokensPerHour: { consumed: number; remaining: number }
-  concurrentRequests: { consumed: number; remaining: number }
-}
-
 export type SortDirection = "asc" | "desc"
 
 export interface SortConfig {
@@ -40,8 +33,9 @@ export interface SortConfig {
 
 export type DatePreset = "today" | "7d" | "30d" | "90d" | "custom"
 
-export interface DateRangeState {
-  from: string
-  to: string
-  preset: DatePreset
+// Validates that a string looks like a GA4 property ID (numeric, 5-15 digits)
+const PROPERTY_ID_REGEX = /^\d{5,15}$/
+
+export function isValidPropertyId(id: string): boolean {
+  return PROPERTY_ID_REGEX.test(id)
 }

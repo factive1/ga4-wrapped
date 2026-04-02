@@ -7,27 +7,27 @@ import { TopBarChart } from "@/components/charts/bar-chart"
 import type { TableRow } from "@/lib/types"
 
 const channelColumns = [
-  { key: "channel", label: "Channel", format: "text" as const },
-  { key: "users", label: "Users", format: "number" as const },
+  { key: "sessionDefaultChannelGroup", label: "Channel", format: "text" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
   { key: "sessions", label: "Sessions", format: "number" as const },
   { key: "bounceRate", label: "Bounce Rate", format: "percent" as const },
-  { key: "avgDuration", label: "Avg. Duration", format: "duration" as const },
+  { key: "averageSessionDuration", label: "Avg. Duration", format: "duration" as const },
 ]
 
 const sourceColumns = [
-  { key: "source", label: "Source", format: "text" as const },
-  { key: "medium", label: "Medium", format: "text" as const },
-  { key: "users", label: "Users", format: "number" as const },
+  { key: "sessionSource", label: "Source", format: "text" as const },
+  { key: "sessionMedium", label: "Medium", format: "text" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
   { key: "sessions", label: "Sessions", format: "number" as const },
   { key: "bounceRate", label: "Bounce Rate", format: "percent" as const },
-  { key: "avgDuration", label: "Avg. Duration", format: "duration" as const },
+  { key: "averageSessionDuration", label: "Avg. Duration", format: "duration" as const },
 ]
 
 const campaignColumns = [
-  { key: "campaign", label: "Campaign", format: "text" as const },
-  { key: "source", label: "Source", format: "text" as const },
-  { key: "medium", label: "Medium", format: "text" as const },
-  { key: "users", label: "Users", format: "number" as const },
+  { key: "sessionCampaignName", label: "Campaign", format: "text" as const },
+  { key: "sessionSource", label: "Source", format: "text" as const },
+  { key: "sessionMedium", label: "Medium", format: "text" as const },
+  { key: "totalUsers", label: "Users", format: "number" as const },
   { key: "sessions", label: "Sessions", format: "number" as const },
 ]
 
@@ -50,7 +50,11 @@ export function TrafficView({
         : campaigns
 
   const chartLabelKey =
-    tab === "channels" ? "channel" : tab === "sources" ? "source" : "campaign"
+    tab === "channels"
+      ? "sessionDefaultChannelGroup"
+      : tab === "sources"
+        ? "sessionSource"
+        : "sessionCampaignName"
 
   return (
     <Tabs value={tab} onValueChange={setTab}>
@@ -64,7 +68,7 @@ export function TrafficView({
         <TopBarChart
           title={`Top 10 ${tab === "channels" ? "Channels" : tab === "sources" ? "Sources" : "Campaigns"} by Users`}
           data={chartData as Record<string, string | number>[]}
-          dataKey="users"
+          dataKey="totalUsers"
           labelKey={chartLabelKey}
           valueLabel="Users"
         />
