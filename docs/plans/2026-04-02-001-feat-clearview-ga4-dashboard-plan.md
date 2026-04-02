@@ -1,7 +1,7 @@
 ---
 title: "feat: Clearview — Self-Hosted GA4 Dashboard"
 type: feat
-status: active
+status: completed
 date: 2026-04-02
 ---
 
