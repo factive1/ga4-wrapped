@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getGeoMetrics } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { SortableTable } from "@/components/sortable-table"
 import { NoProperty } from "@/components/no-property"
 import { SkeletonTable } from "@/components/skeletons"
@@ -33,13 +34,7 @@ export default async function GeoPage(props: {
   )
 }
 
-async function GeoData({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function GeoData({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getGeoMetrics(accessToken, propertyId, dateRange)
@@ -53,7 +48,8 @@ async function GeoData({
         searchPlaceholder="Search by country or city..."
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[GeoData]", error)
     return <ErrorDisplay message="Failed to load geographic data." />
   }
 }

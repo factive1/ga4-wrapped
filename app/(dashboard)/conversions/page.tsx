@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getConversionMetrics, getConversionsBySource } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { MetricCard } from "@/components/metric-card"
 import { SortableTable } from "@/components/sortable-table"
 import { NoProperty } from "@/components/no-property"
@@ -54,13 +55,7 @@ export default async function ConversionsPage(props: {
   )
 }
 
-async function ConversionsData({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function ConversionsData({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const { cards, byEvent } = await getConversionMetrics(
@@ -94,18 +89,13 @@ async function ConversionsData({
         />
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[ConversionsData]", error)
     return <ErrorDisplay message="Failed to load conversion data." />
   }
 }
 
-async function ConversionsBySourceSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function ConversionsBySourceSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getConversionsBySource(
@@ -123,7 +113,8 @@ async function ConversionsBySourceSection({
         columns={sourceColumns}
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[ConversionsBySource]", error)
     return <ErrorDisplay message="Failed to load conversions by source." />
   }
 }

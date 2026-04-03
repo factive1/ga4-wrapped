@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getEngagementMetrics, getTopEvents } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { MetricCard } from "@/components/metric-card"
 import { NoProperty } from "@/components/no-property"
 import { SkeletonCards, SkeletonChart, SkeletonTable } from "@/components/skeletons"
@@ -43,13 +44,7 @@ export default async function EngagementPage(props: {
   )
 }
 
-async function EngagementMetricsSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function EngagementMetricsSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const metrics = await getEngagementMetrics(accessToken, propertyId, dateRange)
@@ -61,24 +56,20 @@ async function EngagementMetricsSection({
         ))}
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[EngagementMetrics]", error)
     return <ErrorDisplay message="Failed to load engagement metrics." />
   }
 }
 
-async function EngagementEventsSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function EngagementEventsSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const events = await getTopEvents(accessToken, propertyId, dateRange)
 
     return <EngagementEvents events={events} />
-  } catch {
+  } catch (error) {
+    console.error("[EngagementEvents]", error)
     return <ErrorDisplay message="Failed to load event data." />
   }
 }

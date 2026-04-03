@@ -1,7 +1,8 @@
 import { cache } from "react"
 import { OAuth2Client } from "google-auth-library"
 import type { DateRangeParams, MetricCardData, TimeSeriesPoint, TableRow } from "./types"
-import { getComparisonRange, formatNumber, formatDuration, formatPercent } from "./date-utils"
+import { getComparisonRange, formatDate, formatNumber, formatDuration, formatPercent } from "./date-utils"
+import { createTTLCache } from "./cache"
 
 // Google client libraries use CommonJS; require() avoids ESM interop issues
 const { BetaAnalyticsDataClient } =
@@ -16,6 +17,41 @@ const getDataClient = cache((accessToken: string) => {
   return new BetaAnalyticsDataClient({ authClient: oauth2Client as never })
 })
 
+// ─── GA4 response types ─────────────────────────────────────────────────────
+
+interface GA4DimensionValue {
+  value?: string | null
+}
+
+interface GA4MetricValue {
+  value?: string | null
+}
+
+interface GA4Row {
+  dimensionValues?: GA4DimensionValue[]
+  metricValues?: GA4MetricValue[]
+}
+
+interface GA4ReportResponse {
+  rows?: GA4Row[]
+  propertyQuota?: unknown
+}
+
+// ─── TTL-based report cache ─────────────────────────────────────────────────
+
+const reportCache = createTTLCache<unknown>(500)
+
+function reportCacheKey(propertyId: string, dateRange: DateRangeParams, config: ReportConfig): string {
+  return `report:${propertyId}:${dateRange.from}:${dateRange.to}:${JSON.stringify(config)}`
+}
+
+/** Returns TTL in ms: historical ranges (end < today) get 1 hour, current ranges get 5 minutes */
+function getTTL(dateRange: DateRangeParams): number {
+  const today = formatDate(new Date())
+  if (dateRange.to < today) return 60 * 60 * 1000 // 1 hour for historical data
+  return 5 * 60 * 1000 // 5 minutes for ranges including today
+}
+
 // ─── Generic report helpers ──────────────────────────────────────────────────
 
 interface ReportConfig {
@@ -23,14 +59,24 @@ interface ReportConfig {
   metrics: string[]
   orderBy?: { metric?: string; dimension?: string; desc?: boolean }
   limit?: number
-  dimensionFilter?: unknown
+  dimensionFilter?: {
+    filter?: {
+      fieldName: string
+      stringFilter: { value: string; matchType?: string }
+    }
+  }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function runWithRetry(client: any, method: string, request: unknown, retries = 3): Promise<any> {
+async function runWithRetry(
+  client: InstanceType<typeof BetaAnalyticsDataClient>,
+  method: "runReport" | "runRealtimeReport",
+  request: unknown,
+  retries = 3
+): Promise<[GA4ReportResponse]> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      return await client[method](request)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return await (client as any)[method](request)
     } catch (error: unknown) {
       const err = error as { code?: number }
       if (err.code === 429 && attempt < retries - 1) {
@@ -44,8 +90,7 @@ async function runWithRetry(client: any, method: string, request: unknown, retri
 }
 
 function mapRows(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  rows: any[],
+  rows: GA4Row[],
   dimKeys: string[],
   metricKeys: string[],
   defaults?: Record<string, string>
@@ -69,6 +114,10 @@ const runReport = cache(
     dateRange: DateRangeParams,
     config: ReportConfig
   ): Promise<TableRow[]> => {
+    const cacheKey = reportCacheKey(propertyId, dateRange, config)
+    const cached = reportCache.get(cacheKey) as TableRow[] | undefined
+    if (cached) return cached
+
     const client = getDataClient(accessToken)
     const [response] = await runWithRetry(client, "runReport", {
       property: `properties/${propertyId}`,
@@ -86,16 +135,66 @@ const runReport = cache(
       dimensionFilter: config.dimensionFilter,
       returnPropertyQuota: true,
     })
-    return mapRows(response.rows ?? [], config.dimensions, config.metrics)
+    const result = mapRows(response.rows ?? [], config.dimensions, config.metrics)
+    reportCache.set(cacheKey, result, getTTL(dateRange))
+    return result
   }
 )
+
+// ─── Comparison metrics helper ──────────────────────────────────────────────
+
+interface MetricDef {
+  label: string
+  fmt: (v: number) => string
+}
+
+/**
+ * Fetches metrics with a comparison date range and produces MetricCardData[].
+ * Shared by getOverviewMetrics and getEngagementMetrics to avoid duplication.
+ */
+async function getComparisonMetrics(
+  accessToken: string,
+  propertyId: string,
+  dateRange: DateRangeParams,
+  cachePrefix: string,
+  metricNames: string[],
+  defs: MetricDef[]
+): Promise<MetricCardData[]> {
+  const cacheKey = `${cachePrefix}:${propertyId}:${dateRange.from}:${dateRange.to}`
+  const cached = reportCache.get(cacheKey) as MetricCardData[] | undefined
+  if (cached) return cached
+
+  const client = getDataClient(accessToken)
+  const comparison = getComparisonRange(dateRange)
+
+  const [response] = await runWithRetry(client, "runReport", {
+    property: `properties/${propertyId}`,
+    dateRanges: [
+      { startDate: dateRange.from, endDate: dateRange.to },
+      { startDate: comparison.from, endDate: comparison.to },
+    ],
+    metrics: metricNames.map((name) => ({ name })),
+    returnPropertyQuota: true,
+  })
+
+  const current = response.rows?.[0]?.metricValues ?? []
+  const previous = response.rows?.[1]?.metricValues ?? []
+
+  const result = defs.map(({ label, fmt }, idx) => {
+    const curVal = Number(current[idx]?.value ?? 0)
+    const prevVal = Number(previous[idx]?.value ?? 0)
+    return { label, value: fmt(curVal), change: calcChange(curVal, prevVal) }
+  })
+  reportCache.set(cacheKey, result, getTTL(dateRange))
+  return result
+}
 
 // ─── Overview ────────────────────────────────────────────────────────────────
 
 export const getRealtimeActiveUsers = cache(
   async (accessToken: string, propertyId: string): Promise<number> => {
     const client = getDataClient(accessToken)
-    const [response] = await client.runRealtimeReport({
+    const [response] = await runWithRetry(client, "runRealtimeReport", {
       property: `properties/${propertyId}`,
       metrics: [{ name: "activeUsers" }],
     })
@@ -104,51 +203,21 @@ export const getRealtimeActiveUsers = cache(
 )
 
 export const getOverviewMetrics = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<MetricCardData[]> => {
-    const client = getDataClient(accessToken)
-    const comparison = getComparisonRange(dateRange)
-
-    const [response] = await runWithRetry(client, "runReport", {
-      property: `properties/${propertyId}`,
-      dateRanges: [
-        { startDate: dateRange.from, endDate: dateRange.to },
-        { startDate: comparison.from, endDate: comparison.to },
-      ],
-      metrics: [
-        { name: "totalUsers" },
-        { name: "sessions" },
-        { name: "screenPageViews" },
-        { name: "bounceRate" },
-        { name: "averageSessionDuration" },
-      ],
-      returnPropertyQuota: true,
-    })
-
-    const current = response.rows?.[0]?.metricValues ?? []
-    const previous = response.rows?.[1]?.metricValues ?? []
-
-    const defs = [
-      { label: "Users", idx: 0, fmt: formatNumber },
-      { label: "Sessions", idx: 1, fmt: formatNumber },
-      { label: "Pageviews", idx: 2, fmt: formatNumber },
-      { label: "Bounce Rate", idx: 3, fmt: formatPercent },
-      { label: "Avg. Session Duration", idx: 4, fmt: formatDuration },
-    ]
-
-    return defs.map(({ label, idx, fmt }) => {
-      const curVal = Number(current[idx]?.value ?? 0)
-      const prevVal = Number(previous[idx]?.value ?? 0)
-      return {
-        label,
-        value: fmt(curVal),
-        change: calcChange(curVal, prevVal),
-      }
-    })
-  }
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams): Promise<MetricCardData[]> =>
+    getComparisonMetrics(
+      accessToken,
+      propertyId,
+      dateRange,
+      "overview",
+      ["totalUsers", "sessions", "screenPageViews", "bounceRate", "averageSessionDuration"],
+      [
+        { label: "Users", fmt: formatNumber },
+        { label: "Sessions", fmt: formatNumber },
+        { label: "Pageviews", fmt: formatNumber },
+        { label: "Bounce Rate", fmt: formatPercent },
+        { label: "Avg. Session Duration", fmt: formatDuration },
+      ]
+    )
 )
 
 export const getUsersByDay = cache(
@@ -215,7 +284,7 @@ export const getTrafficByCampaign = cache(
   (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
     runReport(accessToken, propertyId, dateRange, {
       dimensions: ["sessionCampaignName", "sessionSource", "sessionMedium"],
-      metrics: ["totalUsers", "sessions", "bounceRate", "averageSessionDuration"],
+      metrics: TRAFFIC_METRICS,
       orderBy: { metric: "totalUsers" },
     })
 )
@@ -242,45 +311,20 @@ export const getPageMetrics = cache(
 // ─── Engagement ──────────────────────────────────────────────────────────────
 
 export const getEngagementMetrics = cache(
-  async (
-    accessToken: string,
-    propertyId: string,
-    dateRange: DateRangeParams
-  ): Promise<MetricCardData[]> => {
-    const client = getDataClient(accessToken)
-    const comparison = getComparisonRange(dateRange)
-
-    const [response] = await runWithRetry(client, "runReport", {
-      property: `properties/${propertyId}`,
-      dateRanges: [
-        { startDate: dateRange.from, endDate: dateRange.to },
-        { startDate: comparison.from, endDate: comparison.to },
-      ],
-      metrics: [
-        { name: "engagementRate" },
-        { name: "userEngagementDuration" },
-        { name: "screenPageViewsPerSession" },
-        { name: "eventCountPerSession" },
-      ],
-      returnPropertyQuota: true,
-    })
-
-    const current = response.rows?.[0]?.metricValues ?? []
-    const previous = response.rows?.[1]?.metricValues ?? []
-
-    const defs = [
-      { label: "Engagement Rate", idx: 0, fmt: (v: number) => formatPercent(v * 100) },
-      { label: "Avg. Engaged Time", idx: 1, fmt: formatDuration },
-      { label: "Pages / Session", idx: 2, fmt: (v: number) => v.toFixed(1) },
-      { label: "Events / Session", idx: 3, fmt: (v: number) => v.toFixed(1) },
-    ]
-
-    return defs.map(({ label, idx, fmt }) => {
-      const curVal = Number(current[idx]?.value ?? 0)
-      const prevVal = Number(previous[idx]?.value ?? 0)
-      return { label, value: fmt(curVal), change: calcChange(curVal, prevVal) }
-    })
-  }
+  (accessToken: string, propertyId: string, dateRange: DateRangeParams): Promise<MetricCardData[]> =>
+    getComparisonMetrics(
+      accessToken,
+      propertyId,
+      dateRange,
+      "engagement",
+      ["engagementRate", "userEngagementDuration", "screenPageViewsPerSession", "eventCountPerSession"],
+      [
+        { label: "Engagement Rate", fmt: (v: number) => formatPercent(v * 100) },
+        { label: "Avg. Engaged Time", fmt: formatDuration },
+        { label: "Pages / Session", fmt: (v: number) => v.toFixed(1) },
+        { label: "Events / Session", fmt: (v: number) => v.toFixed(1) },
+      ]
+    )
 )
 
 export const getTopEvents = cache(
@@ -300,6 +344,10 @@ export const getConversionMetrics = cache(
     propertyId: string,
     dateRange: DateRangeParams
   ): Promise<{ cards: MetricCardData[]; byEvent: TableRow[] }> => {
+    const cacheKey = `conversions:${propertyId}:${dateRange.from}:${dateRange.to}`
+    const cached = reportCache.get(cacheKey) as { cards: MetricCardData[]; byEvent: TableRow[] } | undefined
+    if (cached) return cached
+
     const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
@@ -356,7 +404,9 @@ export const getConversionMetrics = cache(
       ["conversions", "totalUsers", "sessionConversionRate"]
     )
 
-    return { cards, byEvent }
+    const result = { cards, byEvent }
+    reportCache.set(cacheKey, result, getTTL(dateRange))
+    return result
   }
 )
 
@@ -376,7 +426,11 @@ export const getRevenueMetrics = cache(
     accessToken: string,
     propertyId: string,
     dateRange: DateRangeParams
-  ): Promise<MetricCardData[]> => {
+  ): Promise<{ cards: MetricCardData[]; hasRevenue: boolean }> => {
+    const cacheKey = `revenue:${propertyId}:${dateRange.from}:${dateRange.to}`
+    const cached = reportCache.get(cacheKey) as { cards: MetricCardData[]; hasRevenue: boolean } | undefined
+    if (cached) return cached
+
     const client = getDataClient(accessToken)
     const comparison = getComparisonRange(dateRange)
 
@@ -401,23 +455,28 @@ export const getRevenueMetrics = cache(
     const transactions = Number(current[1]?.value ?? 0)
     const avgOrderValue = transactions > 0 ? revenue / transactions : 0
 
-    return [
-      {
-        label: "Total Revenue",
-        value: `$${formatNumber(revenue)}`,
-        change: calcChange(revenue, Number(previous[0]?.value ?? 0)),
-      },
-      {
-        label: "Transactions",
-        value: formatNumber(transactions),
-        change: calcChange(transactions, Number(previous[1]?.value ?? 0)),
-      },
-      {
-        label: "Avg. Order Value",
-        value: `$${avgOrderValue.toFixed(2)}`,
-        change: null,
-      },
-    ]
+    const result = {
+      cards: [
+        {
+          label: "Total Revenue",
+          value: `$${formatNumber(revenue)}`,
+          change: calcChange(revenue, Number(previous[0]?.value ?? 0)),
+        },
+        {
+          label: "Transactions",
+          value: formatNumber(transactions),
+          change: calcChange(transactions, Number(previous[1]?.value ?? 0)),
+        },
+        {
+          label: "Avg. Order Value",
+          value: `$${avgOrderValue.toFixed(2)}`,
+          change: null,
+        },
+      ],
+      hasRevenue: revenue > 0 || transactions > 0,
+    }
+    reportCache.set(cacheKey, result, getTTL(dateRange))
+    return result
   }
 )
 
@@ -441,35 +500,6 @@ export const getRevenueByPage = cache(
 
 // ─── Devices ─────────────────────────────────────────────────────────────────
 
-export const getDeviceBreakdown = cache(
-  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
-    runReport(accessToken, propertyId, dateRange, {
-      dimensions: ["deviceCategory"],
-      metrics: ["totalUsers", "sessions"],
-      orderBy: { metric: "totalUsers" },
-    })
-)
-
-export const getBrowserBreakdown = cache(
-  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
-    runReport(accessToken, propertyId, dateRange, {
-      dimensions: ["browser"],
-      metrics: ["totalUsers", "sessions"],
-      orderBy: { metric: "totalUsers" },
-      limit: 10,
-    })
-)
-
-export const getOSBreakdown = cache(
-  (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
-    runReport(accessToken, propertyId, dateRange, {
-      dimensions: ["operatingSystem"],
-      metrics: ["totalUsers", "sessions"],
-      orderBy: { metric: "totalUsers" },
-      limit: 10,
-    })
-)
-
 export const getFullDeviceTable = cache(
   (accessToken: string, propertyId: string, dateRange: DateRangeParams) =>
     runReport(accessToken, propertyId, dateRange, {
@@ -478,6 +508,22 @@ export const getFullDeviceTable = cache(
       orderBy: { metric: "totalUsers" },
     })
 )
+
+/** Aggregate full device table rows by a single dimension for donut charts */
+export function aggregateByDimension(
+  rows: TableRow[],
+  dimension: string,
+  metricKey = "totalUsers"
+): TableRow[] {
+  const map = new Map<string, number>()
+  for (const row of rows) {
+    const key = row[dimension] as string
+    map.set(key, (map.get(key) ?? 0) + (row[metricKey] as number))
+  }
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([dim, val]) => ({ [dimension]: dim, [metricKey]: val }))
+}
 
 // ─── Geo ─────────────────────────────────────────────────────────────────────
 

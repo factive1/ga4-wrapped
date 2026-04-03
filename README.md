@@ -1,121 +1,122 @@
-# Clearview
+# GA4 Wrapped
 
-A self-hosted GA4 dashboard that doesn't suck.
+A clean, open-source dashboard for Google Analytics 4. All your data, none of the pain.
 
-You already have Google Analytics 4 installed. You don't need to switch providers. You just need a dashboard that shows your data clearly.
+You already have GA4 installed. You just need a dashboard that doesn't suck.
 
-Clearview connects to your existing GA4 data via the Data API and renders 8 focused dashboard views. No database, no data storage — pure read-only dashboard using your Google account.
+## What You Get
 
-## Features
+- **Overview** — sessions, users, pageviews, bounce rate at a glance
+- **Traffic** — sources, mediums, campaigns broken down
+- **Pages** — top pages by views, time on page, entrances
+- **Engagement** — session duration, events, engaged sessions
+- **Conversions** — goal completions and conversion rates
+- **Revenue** — transaction revenue, purchase metrics
+- **Devices** — browser, OS, screen resolution breakdown
+- **Geo** — country and city-level traffic
 
-- **Overview** — Active users, key metrics, users by day chart, top pages and sources
-- **Traffic** — Channels, sources, UTM campaigns with bar charts
-- **Pages** — All pages with pageviews, users, time on page, and search
-- **Engagement** — Engagement rate, events per session, top events
-- **Conversions** — Conversion events, rates, conversions by source
-- **Revenue** — Total revenue, transactions, revenue by source and landing page
-- **Devices** — Device, browser, OS breakdown with donut charts
-- **Geographic** — Users by country and city with search
+All data is fetched live from the GA4 Data API. No database. No data warehouse. No third-party analytics platform.
 
-Plus: dark mode, date range picker with presets, multi-property support, comparison periods, and skeleton loading states.
+## Prerequisites
 
-## Quick Start
+- Node.js 18+
+- A Google Cloud Platform project with OAuth 2.0 credentials
+- A GA4 property you have access to
 
-### 1. Clone
+## Setting Up Google Cloud Credentials
+
+**You must create your own GCP OAuth credentials.** This app does not ship with any Google credentials — you bring your own.
+
+### Step-by-step
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or select an existing one)
+3. Enable the following APIs:
+   - **Google Analytics Data API** (this is the GA4 reporting API)
+   - **Google Analytics Admin API** (used to list your properties)
+4. Go to **APIs & Services > Credentials**
+5. Click **Create Credentials > OAuth client ID**
+6. Choose **Web application** as the application type
+7. Add authorized redirect URIs:
+   - For local dev: `http://localhost:3000/api/auth/callback/google`
+   - For production: `https://yourdomain.com/api/auth/callback/google`
+8. Copy the **Client ID** and **Client Secret**
+
+### Configure the OAuth consent screen
+
+1. Go to **APIs & Services > OAuth consent screen**
+2. Choose **External** (unless you're on Google Workspace and want internal-only)
+3. Fill in the required fields (app name, support email)
+4. Add scopes:
+   - `openid`
+   - `email`
+   - `profile`
+   - `https://www.googleapis.com/auth/analytics.readonly`
+   - `https://www.googleapis.com/auth/analytics.manage.readonly`
+5. Add your Google account as a test user (required while in "Testing" status)
+
+> **Note:** While your app is in "Testing" status, only test users you explicitly add can sign in. You don't need to go through Google's verification process for personal or internal use.
+
+## Installation
 
 ```bash
-git clone https://github.com/your-username/clearview.git
-cd clearview
+git clone https://github.com/factive1/ga4-wrapped.git
+cd ga4-wrapped
 npm install
 ```
 
-### 2. Set up GCP credentials
+## Configuration
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or use an existing one)
-3. Enable the **Google Analytics Data API** (`analyticsdata.googleapis.com`)
-4. Enable the **Google Analytics Admin API** (`analyticsadmin.googleapis.com`)
-5. Go to **APIs & Services > Credentials**
-6. Click **Create Credentials > OAuth client ID**
-7. Choose **Web application**
-8. Add authorized redirect URIs:
-   - `http://localhost:3000/api/auth/callback/google` (for local dev)
-   - `https://your-app.vercel.app/api/auth/callback/google` (for Vercel)
-9. Go to **APIs & Services > OAuth consent screen**
-10. Add these scopes:
-    - `https://www.googleapis.com/auth/analytics.readonly`
-    - `https://www.googleapis.com/auth/analytics.manage.readonly`
-11. Copy the **Client ID** and **Client Secret**
-
-### 3. Configure environment
+Copy the example env file and fill in your values:
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
-Edit `.env`:
-
-```
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your-client-secret
-AUTH_SECRET=  # Generate with: openssl rand -base64 32
+```env
+GOOGLE_CLIENT_ID=your-client-id-from-step-8.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret-from-step-8
+AUTH_SECRET=generate-with-openssl-rand-base64-32
 ```
 
-### 4. Run
+Generate `AUTH_SECRET`:
+
+```bash
+openssl rand -base64 32
+```
+
+## Running
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), sign in with Google, select a GA4 property, and you're in.
+Open [http://localhost:3000](http://localhost:3000). Sign in with the Google account that has access to your GA4 properties. Pick a property and you're in.
 
-## Deploy
+## Production
 
-### Vercel (recommended)
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-username/clearview&env=GOOGLE_CLIENT_ID,GOOGLE_CLIENT_SECRET,AUTH_SECRET)
-
-Set the three environment variables in the Vercel dashboard. Update your GCP OAuth redirect URI to `https://your-app.vercel.app/api/auth/callback/google`.
-
-### Docker
+The app builds as a standalone Next.js server:
 
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
-docker compose up
+npm run build
 ```
 
-### Self-hosted
-
-Clearview is a standard Next.js app. Deploy it anywhere Node.js runs.
-
-**HTTPS is required for production.** Without HTTPS, the `Secure` cookie flag is ineffective and tokens travel in plaintext. Use a reverse proxy (nginx, Caddy) to terminate TLS.
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GOOGLE_CLIENT_ID` | Yes | OAuth client ID from GCP |
-| `GOOGLE_CLIENT_SECRET` | Yes | OAuth client secret from GCP |
-| `AUTH_SECRET` | Yes | Random secret for encrypting sessions. Generate with `openssl rand -base64 32` |
-
-## Known Limits
-
-- **Vercel free tier** has a 10-second serverless function timeout. Most GA4 API calls return in 1-3 seconds, but 90-day ranges on high-traffic properties with complex queries could get close. Each dashboard section loads independently, so one slow section won't block the rest.
-- **GA4 API quotas**: Standard properties allow 200,000 tokens/day, 40,000 tokens/hour. A page load uses 3-6 API calls (~10 tokens each). Exponential backoff handles rate limits automatically.
-- **No caching**: Data is fetched live from GA4 on every page load. This keeps things simple and ensures fresh data, but means every page load hits the API.
+Deploy with Docker, a VPS, or any platform that runs Node.js. Set the same environment variables in your production environment.
 
 ## Tech Stack
 
-- [Next.js](https://nextjs.org) (App Router)
-- [shadcn/ui](https://ui.shadcn.com) + [Tailwind CSS](https://tailwindcss.com)
-- [Auth.js v5](https://authjs.dev) (Google OAuth)
-- [Google Analytics Data API v1](https://developers.google.com/analytics/devguides/reporting/data/v1)
-- [Google Analytics Admin API](https://developers.google.com/analytics/devguides/config/admin/v1)
+- [Next.js](https://nextjs.org/) (App Router)
+- [Auth.js](https://authjs.dev/) v5 (Google OAuth)
+- [Google Analytics Data API](https://developers.google.com/analytics/devguides/reporting/data/v1) (GA4)
+- [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS](https://tailwindcss.com/)
+- [Recharts](https://recharts.org/) (via shadcn/ui chart components)
 
-## Contributing
+## Security
 
-See [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+- OAuth access tokens never leave the server
+- Security headers (CSP, HSTS, X-Frame-Options) on all responses
+- Input validation on all API parameters
+- No database — nothing to breach
 
 ## License
 

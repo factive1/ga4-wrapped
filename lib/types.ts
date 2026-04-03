@@ -14,14 +14,18 @@ export interface TimeSeriesPoint {
   value: number
 }
 
-export interface TableRow {
-  [key: string]: string | number
-}
+export type TableRow = Record<string, string | number>
 
 export interface GA4Property {
   propertyId: string
   displayName: string
   accountName: string
+}
+
+/** Props shared by all async data-fetching sections inside dashboard pages */
+export interface SectionProps {
+  propertyId: string
+  dateRange: DateRangeParams
 }
 
 export type SortDirection = "asc" | "desc"

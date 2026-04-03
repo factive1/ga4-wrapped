@@ -9,16 +9,16 @@ export function getDateRange(preset: DatePreset): DateRangeParams {
     case "today":
       break
     case "7d":
-      from.setDate(from.getDate() - 6)
+      from.setUTCDate(from.getUTCDate() - 6)
       break
     case "30d":
-      from.setDate(from.getDate() - 29)
+      from.setUTCDate(from.getUTCDate() - 29)
       break
     case "90d":
-      from.setDate(from.getDate() - 89)
+      from.setUTCDate(from.getUTCDate() - 89)
       break
     default:
-      from.setDate(from.getDate() - 29)
+      from.setUTCDate(from.getUTCDate() - 29)
   }
 
   return { from: formatDate(from), to }
@@ -39,9 +39,9 @@ export function getComparisonRange(range: DateRangeParams): DateRangeParams {
 
 /** Format a Date to YYYY-MM-DD using UTC to avoid timezone drift */
 export function formatDate(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, "0")
-  const d = String(date.getDate()).padStart(2, "0")
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0")
+  const d = String(date.getUTCDate()).padStart(2, "0")
   return `${y}-${m}-${d}`
 }
 

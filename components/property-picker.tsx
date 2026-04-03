@@ -25,9 +25,12 @@ export function PropertyPicker({
   function handleChange(propertyId: string | null) {
     if (!propertyId) return
     setValue(propertyId)
-    const secure = window.location.protocol === "https:" ? "; Secure" : ""
-    document.cookie = `ga4_property_id=${propertyId}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax${secure}`
-    startTransition(() => {
+    startTransition(async () => {
+      await fetch("/api/property", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId }),
+      })
       router.refresh()
     })
   }

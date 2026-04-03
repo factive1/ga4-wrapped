@@ -7,6 +7,7 @@ import {
   getTopPages,
   getTopSources,
 } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { MetricCard } from "@/components/metric-card"
 import { UsersLineChart } from "@/components/charts/line-chart"
 import { SkeletonCards, SkeletonChart, SkeletonTable } from "@/components/skeletons"
@@ -45,7 +46,7 @@ export default async function OverviewPage(props: {
   )
 }
 
-async function OverviewMetrics({ propertyId, dateRange }: { propertyId: string; dateRange: { from: string; to: string } }) {
+async function OverviewMetrics({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const [activeUsers, metrics] = await Promise.all([
@@ -58,22 +59,24 @@ async function OverviewMetrics({ propertyId, dateRange }: { propertyId: string; 
         {metrics.map((m) => <MetricCard key={m.label} {...m} />)}
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[OverviewMetrics]", error)
     return <ErrorDisplay message="Failed to load overview metrics." />
   }
 }
 
-async function UsersByDayChart({ propertyId, dateRange }: { propertyId: string; dateRange: { from: string; to: string } }) {
+async function UsersByDayChart({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getUsersByDay(accessToken, propertyId, dateRange)
     return <UsersLineChart title="Users by Day" data={data} />
-  } catch {
+  } catch (error) {
+    console.error("[UsersByDayChart]", error)
     return <ErrorDisplay message="Failed to load users chart." />
   }
 }
 
-async function TopPagesTable({ propertyId, dateRange }: { propertyId: string; dateRange: { from: string; to: string } }) {
+async function TopPagesTable({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getTopPages(accessToken, propertyId, dateRange)
@@ -98,12 +101,13 @@ async function TopPagesTable({ propertyId, dateRange }: { propertyId: string; da
         </table>
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[TopPagesTable]", error)
     return <ErrorDisplay message="Failed to load top pages." />
   }
 }
 
-async function TopSourcesTable({ propertyId, dateRange }: { propertyId: string; dateRange: { from: string; to: string } }) {
+async function TopSourcesTable({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getTopSources(accessToken, propertyId, dateRange)
@@ -128,7 +132,8 @@ async function TopSourcesTable({ propertyId, dateRange }: { propertyId: string; 
         </table>
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[TopSourcesTable]", error)
     return <ErrorDisplay message="Failed to load top sources." />
   }
 }

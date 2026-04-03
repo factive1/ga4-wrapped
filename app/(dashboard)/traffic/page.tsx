@@ -5,6 +5,7 @@ import {
   getTrafficBySource,
   getTrafficByCampaign,
 } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { TrafficView } from "./traffic-view"
 import { NoProperty } from "@/components/no-property"
 import { SkeletonChart, SkeletonTable } from "@/components/skeletons"
@@ -35,13 +36,7 @@ export default async function TrafficPage(props: {
   )
 }
 
-async function TrafficData({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function TrafficData({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const [channels, sources, campaigns] = await Promise.all([
@@ -57,7 +52,8 @@ async function TrafficData({
         campaigns={campaigns}
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[TrafficData]", error)
     return <ErrorDisplay message="Failed to load traffic data." />
   }
 }

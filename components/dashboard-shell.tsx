@@ -33,8 +33,8 @@ export async function DashboardShell({
   let properties: GA4Property[] = []
   try {
     properties = await listProperties(accessToken)
-  } catch {
-    // Properties will be empty — picker shows "No properties found"
+  } catch (error) {
+    console.error("[DashboardShell] Failed to load properties:", error)
   }
 
   const validPropertyId =

@@ -5,6 +5,7 @@ import {
   getRevenueBySource,
   getRevenueByPage,
 } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { MetricCard } from "@/components/metric-card"
 import { SortableTable } from "@/components/sortable-table"
 import { NoProperty } from "@/components/no-property"
@@ -61,20 +62,10 @@ export default async function RevenuePage(props: {
   )
 }
 
-async function RevenueMetricsSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function RevenueMetricsSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
-    const metrics = await getRevenueMetrics(accessToken, propertyId, dateRange)
-
-    const hasRevenue = metrics.some(
-      (m) => m.value !== "$0" && m.value !== "$0.00"
-    )
+    const { cards, hasRevenue } = await getRevenueMetrics(accessToken, propertyId, dateRange)
 
     if (!hasRevenue) {
       return (
@@ -89,23 +80,18 @@ async function RevenueMetricsSection({
 
     return (
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-3">
-        {metrics.map((metric) => (
+        {cards.map((metric) => (
           <MetricCard key={metric.label} {...metric} />
         ))}
       </div>
     )
-  } catch {
+  } catch (error) {
+    console.error("[RevenueMetrics]", error)
     return <ErrorDisplay message="Failed to load revenue metrics." />
   }
 }
 
-async function RevenueBySourceSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function RevenueBySourceSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getRevenueBySource(accessToken, propertyId, dateRange)
@@ -119,18 +105,13 @@ async function RevenueBySourceSection({
         columns={sourceColumns}
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[RevenueBySource]", error)
     return <ErrorDisplay message="Failed to load revenue by source." />
   }
 }
 
-async function RevenueByPageSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function RevenueByPageSection({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getRevenueByPage(accessToken, propertyId, dateRange)
@@ -144,7 +125,8 @@ async function RevenueByPageSection({
         columns={pageColumns}
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[RevenueByPage]", error)
     return <ErrorDisplay message="Failed to load revenue by page." />
   }
 }

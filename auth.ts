@@ -28,6 +28,16 @@ function validateSecret() {
   }
 }
 
+// Validate secret once on first use, not on every request
+let secretValidated = false
+function ensureSecretValidated() {
+  if (secretValidated) return
+  if (process.env.NODE_ENV === "production") {
+    validateSecret()
+  }
+  secretValidated = true
+}
+
 function validateGoogleCredentials() {
   if (!process.env.GOOGLE_CLIENT_ID) {
     throw new Error("GOOGLE_CLIENT_ID is not set")
@@ -38,6 +48,10 @@ function validateGoogleCredentials() {
 }
 
 async function refreshAccessToken(token: JWT): Promise<JWT> {
+  if (!token.refreshToken) {
+    throw new Error("No refresh token available")
+  }
+
   validateGoogleCredentials()
 
   const response = await fetch("https://oauth2.googleapis.com/token", {
@@ -47,15 +61,17 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       client_id: process.env.GOOGLE_CLIENT_ID!,
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
       grant_type: "refresh_token",
-      refresh_token: token.refreshToken as string,
+      refresh_token: token.refreshToken,
     }),
   })
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
-    throw new Error(
-      `Failed to refresh access token: ${error.error_description ?? response.status}`
-    )
+    console.error("[auth] Failed to refresh access token:", {
+      status: response.status,
+      error: error.error,
+    })
+    throw new Error(`Failed to refresh access token: ${response.status}`)
   }
 
   const data = await response.json()
@@ -86,9 +102,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async jwt({ token, account }) {
-      if (process.env.NODE_ENV === "production") {
-        validateSecret()
-      }
+      ensureSecretValidated()
       if (account) {
         token.accessToken = account.access_token
         token.refreshToken = account.refresh_token
@@ -103,7 +117,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Attempt refresh — on failure, clear tokens to force re-auth
       try {
         return await refreshAccessToken(token)
-      } catch {
+      } catch (error) {
+        console.error("[auth] Token refresh failed:", error)
         return { ...token, accessToken: undefined, error: "RefreshTokenError" }
       }
     },

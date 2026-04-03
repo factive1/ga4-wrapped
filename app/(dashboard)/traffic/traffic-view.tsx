@@ -31,6 +31,12 @@ const campaignColumns = [
   { key: "sessions", label: "Sessions", format: "number" as const },
 ]
 
+const TAB_CONFIG: Record<string, { labelKey: string; title: string }> = {
+  channels: { labelKey: "sessionDefaultChannelGroup", title: "Channels" },
+  sources: { labelKey: "sessionSource", title: "Sources" },
+  campaigns: { labelKey: "sessionCampaignName", title: "Campaigns" },
+}
+
 export function TrafficView({
   channels,
   sources,
@@ -42,19 +48,8 @@ export function TrafficView({
 }) {
   const [tab, setTab] = useState("channels")
 
-  const chartData =
-    tab === "channels"
-      ? channels
-      : tab === "sources"
-        ? sources
-        : campaigns
-
-  const chartLabelKey =
-    tab === "channels"
-      ? "sessionDefaultChannelGroup"
-      : tab === "sources"
-        ? "sessionSource"
-        : "sessionCampaignName"
+  const dataByTab: Record<string, TableRow[]> = { channels, sources, campaigns }
+  const { labelKey, title } = TAB_CONFIG[tab]
 
   return (
     <Tabs value={tab} onValueChange={setTab}>
@@ -66,10 +61,10 @@ export function TrafficView({
 
       <div className="mt-6 space-y-6">
         <TopBarChart
-          title={`Top 10 ${tab === "channels" ? "Channels" : tab === "sources" ? "Sources" : "Campaigns"} by Users`}
-          data={chartData as Record<string, string | number>[]}
+          title={`Top 10 ${title} by Users`}
+          data={dataByTab[tab] as Record<string, string | number>[]}
           dataKey="totalUsers"
-          labelKey={chartLabelKey}
+          labelKey={labelKey}
           valueLabel="Users"
         />
 

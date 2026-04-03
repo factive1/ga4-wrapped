@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import { getAccessToken, getPageContext } from "@/lib/auth"
 import { getPageMetrics } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { SortableTable } from "@/components/sortable-table"
 import { NoProperty } from "@/components/no-property"
 import { SkeletonTable } from "@/components/skeletons"
@@ -32,13 +33,7 @@ export default async function PagesPage(props: {
   )
 }
 
-async function PagesData({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function PagesData({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
     const data = await getPageMetrics(accessToken, propertyId, dateRange)
@@ -52,7 +47,8 @@ async function PagesData({
         searchPlaceholder="Search by path or title..."
       />
     )
-  } catch {
+  } catch (error) {
+    console.error("[PagesData]", error)
     return <ErrorDisplay message="Failed to load page data." />
   }
 }

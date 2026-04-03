@@ -1,11 +1,7 @@
 import { Suspense } from "react"
 import { getAccessToken, getPageContext } from "@/lib/auth"
-import {
-  getDeviceBreakdown,
-  getBrowserBreakdown,
-  getOSBreakdown,
-  getFullDeviceTable,
-} from "@/lib/ga4"
+import { getFullDeviceTable, aggregateByDimension } from "@/lib/ga4"
+import type { SectionProps } from "@/lib/types"
 import { DonutChart } from "@/components/charts/donut-chart"
 import { SortableTable } from "@/components/sortable-table"
 import { NoProperty } from "@/components/no-property"
@@ -35,87 +31,64 @@ export default async function DevicesPage(props: {
 
       <Suspense
         fallback={
-          <div className="grid gap-6 md:grid-cols-3">
-            <SkeletonChart />
-            <SkeletonChart />
-            <SkeletonChart />
+          <div className="space-y-6">
+            <div className="grid gap-6 md:grid-cols-3">
+              <SkeletonChart />
+              <SkeletonChart />
+              <SkeletonChart />
+            </div>
+            <SkeletonTable rows={10} />
           </div>
         }
       >
-        <DeviceCharts propertyId={propertyId} dateRange={dateRange} />
-      </Suspense>
-
-      <Suspense fallback={<SkeletonTable rows={10} />}>
-        <DeviceTableSection
-          propertyId={propertyId}
-          dateRange={dateRange}
-        />
+        <DeviceData propertyId={propertyId} dateRange={dateRange} />
       </Suspense>
     </div>
   )
 }
 
-async function DeviceCharts({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
+async function DeviceData({ propertyId, dateRange }: SectionProps) {
   try {
     const accessToken = await getAccessToken()
-    const [devices, browsers, os] = await Promise.all([
-      getDeviceBreakdown(accessToken, propertyId, dateRange),
-      getBrowserBreakdown(accessToken, propertyId, dateRange),
-      getOSBreakdown(accessToken, propertyId, dateRange),
-    ])
+    // Single API call — derive donut charts from the full table
+    const allDevices = await getFullDeviceTable(accessToken, propertyId, dateRange)
+
+    const devices = aggregateByDimension(allDevices, "deviceCategory")
+    const browsers = aggregateByDimension(allDevices, "browser")
+    const os = aggregateByDimension(allDevices, "operatingSystem")
 
     return (
-      <div className="grid gap-6 md:grid-cols-3">
-        <DonutChart
-          title="Device Category"
-          data={devices as Record<string, string | number>[]}
-          labelKey="deviceCategory"
-          valueKey="totalUsers"
-        />
-        <DonutChart
-          title="Top Browsers"
-          data={browsers as Record<string, string | number>[]}
-          labelKey="browser"
-          valueKey="totalUsers"
-        />
-        <DonutChart
-          title="Operating Systems"
-          data={os as Record<string, string | number>[]}
-          labelKey="operatingSystem"
-          valueKey="totalUsers"
+      <div className="space-y-6">
+        <div className="grid gap-6 md:grid-cols-3">
+          <DonutChart
+            title="Device Category"
+            data={devices}
+            labelKey="deviceCategory"
+            valueKey="totalUsers"
+          />
+          <DonutChart
+            title="Top Browsers"
+            data={browsers}
+            labelKey="browser"
+            valueKey="totalUsers"
+          />
+          <DonutChart
+            title="Operating Systems"
+            data={os}
+            labelKey="operatingSystem"
+            valueKey="totalUsers"
+          />
+        </div>
+
+        <SortableTable
+          title="All Devices"
+          data={allDevices}
+          columns={deviceColumns}
         />
       </div>
     )
-  } catch {
-    return <ErrorDisplay message="Failed to load device breakdown." />
-  }
-}
-
-async function DeviceTableSection({
-  propertyId,
-  dateRange,
-}: {
-  propertyId: string
-  dateRange: { from: string; to: string }
-}) {
-  try {
-    const accessToken = await getAccessToken()
-    const data = await getFullDeviceTable(accessToken, propertyId, dateRange)
-
-    return (
-      <SortableTable
-        title="All Devices"
-        data={data}
-        columns={deviceColumns}
-      />
-    )
-  } catch {
-    return <ErrorDisplay message="Failed to load device table." />
+  } catch (error) {
+    console.error("[DeviceData]", error)
+    return <ErrorDisplay message="Failed to load device data." />
   }
 }
