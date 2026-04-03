@@ -17,6 +17,16 @@ You already have GA4 installed. You just need a dashboard that doesn't suck.
 
 All data is fetched live from the GA4 Data API. No database. No data warehouse. No third-party analytics platform.
 
+## How It Works
+
+1. You sign in with your Google account via OAuth
+2. The app uses the GA4 Admin API to list the properties your account has access to
+3. You pick a property and a date range
+4. Each dashboard view fires parallel requests to the GA4 Data API using your OAuth token
+5. Results render server-side with Next.js — your access token never touches the browser
+
+There's no database, no background sync, no stored data. Every page load fetches fresh numbers straight from Google's API. The app is just a better UI for data you already own.
+
 ## Prerequisites
 
 - Node.js 18+
